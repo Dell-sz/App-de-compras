@@ -1246,9 +1246,9 @@
 }
 
 .form-field input,
-.form-field select {
+.form-field select,
+.form-field textarea {
   width: 100%;
-  height: 38px;
   padding: 0 10px;
   color: #35443a;
   background: #fff;
@@ -1258,8 +1258,21 @@
   font-size: 11px;
 }
 
+.form-field input,
+.form-field select {
+  height: 38px;
+}
+
+.form-field textarea {
+  min-height: 180px;
+  padding: 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 .form-field input:focus,
-.form-field select:focus {
+.form-field select:focus,
+.form-field textarea:focus {
   border-color: #79a98a;
   box-shadow: 0 0 0 3px #79a98a20;
 }
@@ -1304,6 +1317,10 @@
 }
 
 .purchase-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 14px;
 }
 
@@ -1317,6 +1334,123 @@
   margin-top: 4px;
   color: #89948b;
   font-size: 10px;
+}
+
+.purchase-import-modal {
+  width: min(920px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.receipt-text-field {
+  margin-bottom: 12px;
+}
+
+.import-preview-heading {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 10px;
+  color: #48574b;
+  font-size: 11px;
+}
+
+.import-preview-heading span {
+  color: #89948b;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.import-items-section {
+  margin-top: 12px;
+}
+
+.import-items-section h3 {
+  margin-bottom: 7px;
+  color: #48574b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.import-unregistered-hint {
+  margin: -2px 0 8px;
+  color: #89948b;
+  font-size: 10px;
+}
+
+.import-preview-list {
+  display: grid;
+  max-height: 48vh;
+  overflow-y: auto;
+  border-top: 1px solid #e9ede8;
+}
+
+.import-preview-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.1fr) minmax(150px, 1.4fr) 85px 110px 30px;
+  align-items: end;
+  gap: 9px;
+  padding: 10px 0 0;
+  border-bottom: 1px solid #f0f2ef;
+}
+
+.import-preview-item {
+  border-bottom: 1px solid #f0f2ef;
+}
+
+.import-preview-item .import-preview-row {
+  border-bottom: 0;
+}
+
+.import-preview-row .form-field {
+  margin-bottom: 10px;
+}
+
+.import-item-description {
+  display: grid;
+  align-self: center;
+  gap: 4px;
+  min-width: 0;
+  padding-bottom: 10px;
+  color: #35443a;
+  font-size: 10px;
+}
+
+.import-item-description strong {
+  overflow-wrap: anywhere;
+}
+
+.import-item-description span {
+  color: #89948b;
+  font-size: 9px;
+}
+
+.import-remove-button {
+  margin-bottom: 10px;
+}
+
+.import-new-product-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(110px, 1fr) 95px 110px minmax(160px, 1.2fr);
+  gap: 9px;
+  padding: 0 0 2px;
+}
+
+.import-new-product-fields .form-field {
+  margin-bottom: 10px;
+}
+
+.import-new-product-note {
+  grid-column: 1 / -1;
+  margin: -5px 0 9px;
+  color: #89948b;
+  font-size: 9px;
+}
+
+.purchase-import-modal .modal-actions {
+  position: sticky;
+  bottom: -23px;
+  padding: 12px 0 2px;
+  background: #fff;
 }
 
 .purchase-layout {
@@ -1524,6 +1658,41 @@
   .purchase-form {
     padding: 14px;
   }
+
+  .purchase-intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .import-preview-row {
+    grid-template-columns: minmax(0, 1fr) 85px 100px 28px;
+    gap: 6px;
+  }
+
+  .import-item-description {
+    grid-column: 1 / -1;
+    padding-bottom: 0;
+  }
+
+  .import-product-field {
+    grid-column: 1 / 2;
+  }
+
+  .import-new-product-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    padding-right: 5px;
+    padding-left: 5px;
+  }
+
+  .import-new-product-fields .import-pricing-mode-field,
+  .import-new-product-note {
+    grid-column: 1 / -1;
+  }
+
+  .purchase-import-modal .modal-actions {
+    bottom: -18px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1682,6 +1851,16 @@
 
 .smart-list-footer .primary-button {
   flex: 0 0 auto;
+}
+
+.smart-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.smart-list-actions > button {
+  justify-content: center;
 }
 
 .archive-product-button {
@@ -1895,6 +2074,15 @@
     flex-direction: column;
   }
 
+  .smart-list-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .smart-list-actions > button {
+    flex: 1 1 auto;
+  }
+
   .archived-product-row {
     align-items: flex-start;
   }
@@ -1969,6 +2157,7 @@
 .app-shell[data-theme='dark'] .search-box kbd,
 .app-shell[data-theme='dark'] .form-field input,
 .app-shell[data-theme='dark'] .form-field select,
+.app-shell[data-theme='dark'] .form-field textarea,
 .app-shell[data-theme='dark'] .stock-count-field input {
   background: var(--theme-surface);
   border-color: var(--theme-border);
@@ -2074,12 +2263,14 @@
 .app-shell[data-theme='dark'] .search-box input,
 .app-shell[data-theme='dark'] .form-field input,
 .app-shell[data-theme='dark'] .form-field select,
+.app-shell[data-theme='dark'] .form-field textarea,
 .app-shell[data-theme='dark'] .stock-count-field input {
   color: var(--theme-text);
 }
 
 .app-shell[data-theme='dark'] .search-box input::placeholder,
-.app-shell[data-theme='dark'] .form-field input::placeholder {
+.app-shell[data-theme='dark'] .form-field input::placeholder,
+.app-shell[data-theme='dark'] .form-field textarea::placeholder {
   color: var(--theme-muted-soft);
 }
 
@@ -2205,9 +2396,32 @@
 
 .app-shell[data-theme='dark'] .form-field input:focus,
 .app-shell[data-theme='dark'] .form-field select:focus,
+.app-shell[data-theme='dark'] .form-field textarea:focus,
 .app-shell[data-theme='dark'] .stock-count-field input:focus {
   border-color: var(--theme-accent-border);
   box-shadow: 0 0 0 3px var(--theme-accent-bg);
+}
+
+.app-shell[data-theme='dark'] .import-preview-heading,
+.app-shell[data-theme='dark'] .import-item-description,
+.app-shell[data-theme='dark'] .import-items-section h3 {
+  color: var(--theme-text);
+}
+
+.app-shell[data-theme='dark'] .import-preview-heading span,
+.app-shell[data-theme='dark'] .import-item-description span,
+.app-shell[data-theme='dark'] .import-unregistered-hint,
+.app-shell[data-theme='dark'] .import-new-product-note {
+  color: var(--theme-muted);
+}
+
+.app-shell[data-theme='dark'] .import-preview-list,
+.app-shell[data-theme='dark'] .import-preview-row {
+  border-color: var(--theme-border-soft);
+}
+
+.app-shell[data-theme='dark'] .purchase-import-modal .modal-actions {
+  background: var(--theme-surface);
 }
 
 .app-shell[data-theme='dark'] .error-message {

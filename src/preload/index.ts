@@ -21,9 +21,28 @@ type PurchaseInput = {
   }[]
 }
 
+type ImportedPurchaseInput = {
+  storeName: string
+  purchaseDate: string
+  items: {
+    productId?: number
+    newProduct?: NewProduct
+    quantity: number
+    unitPrice: number
+    pricingMode?: 'item_total' | 'unit_measure'
+  }[]
+}
+
 type StockCheckEntry = {
   productId: number
   countedQuantity: number
+}
+
+type ShoppingListExportItem = {
+  name: string
+  category: string
+  quantity: number
+  unit: string
 }
 
 const api = {
@@ -42,10 +61,16 @@ const api = {
   purchases: {
     list: () => ipcRenderer.invoke('purchases:list'),
     add: (purchase: PurchaseInput) => ipcRenderer.invoke('purchases:add', purchase),
+    addImported: (purchase: ImportedPurchaseInput) =>
+      ipcRenderer.invoke('purchases:add-imported', purchase),
     remove: (purchaseId: number) => ipcRenderer.invoke('purchases:delete', purchaseId)
   },
   stockChecks: {
     record: (items: StockCheckEntry[]) => ipcRenderer.invoke('stock-checks:record', items)
+  },
+  shoppingList: {
+    exportPdf: (items: ShoppingListExportItem[]) =>
+      ipcRenderer.invoke('shopping-list:export-pdf', items) as Promise<boolean>
   },
   prices: {
     list: () => ipcRenderer.invoke('prices:list')

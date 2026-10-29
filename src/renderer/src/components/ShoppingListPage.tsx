@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, ListChecks, Package } from 'lucide-react'
+import { ArrowRight, FileDown, ListChecks, Package } from 'lucide-react'
 
 type Props = {
   onRegisterPurchase: () => void
@@ -8,7 +8,9 @@ type Props = {
 function ShoppingListPage({ onRegisterPurchase }: Props): React.JSX.Element {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
+  const [exportMessage, setExportMessage] = useState('')
 
   useEffect(() => {
     window.api.products
@@ -21,6 +23,27 @@ function ShoppingListPage({ onRegisterPurchase }: Props): React.JSX.Element {
   const suggestedProducts = products
     .filter((product) => product.quantity <= product.minimumQuantity)
     .sort((a, b) => a.quantity - b.quantity || a.name.localeCompare(b.name, 'pt-BR'))
+
+  async function handleExportPdf(): Promise<void> {
+    setError('')
+    setExportMessage('')
+    setExporting(true)
+    try {
+      const saved = await window.api.shoppingList.exportPdf(
+        suggestedProducts.map((product) => ({
+          name: product.name,
+          category: product.category,
+          quantity: product.quantity,
+          unit: product.unit
+        }))
+      )
+      if (saved) setExportMessage('PDF exportado com sucesso.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível exportar a lista em PDF.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <section className="smart-list-page">
@@ -39,6 +62,7 @@ function ShoppingListPage({ onRegisterPurchase }: Props): React.JSX.Element {
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {exportMessage && <div className="success-message">{exportMessage}</div>}
 
       {loading ? (
         <div className="panel empty-state">Analisando o estoque...</div>
@@ -99,9 +123,19 @@ function ShoppingListPage({ onRegisterPurchase }: Props): React.JSX.Element {
 
           <div className="smart-list-footer">
             <span>A lista será atualizada conforme o estoque mudar.</span>
-            <button className="primary-button" onClick={onRegisterPurchase}>
-              Registrar compra <ArrowRight size={16} />
-            </button>
+            <div className="smart-list-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleExportPdf}
+                disabled={exporting}
+              >
+                <FileDown size={16} /> {exporting ? 'Gerando PDF...' : 'Exportar PDF'}
+              </button>
+              <button className="primary-button" onClick={onRegisterPurchase}>
+                Registrar compra <ArrowRight size={16} />
+              </button>
+            </div>
           </div>
         </>
       )}

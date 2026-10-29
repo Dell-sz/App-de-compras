@@ -2,45 +2,64 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 
 declare global {
   type NewPurchase = {
-  storeName: string
-  purchaseDate: string
-  items: {
-    productId: number
+    storeName: string
+    purchaseDate: string
+    items: {
+      productId: number
+      quantity: number
+      unitPrice: number
+      pricingMode?: PricingMode
+    }[]
+  }
+
+  type ImportedPurchaseInput = {
+    storeName: string
+    purchaseDate: string
+    items: {
+      productId?: number
+      newProduct?: NewProduct
+      quantity: number
+      unitPrice: number
+      pricingMode?: PricingMode
+    }[]
+  }
+
+  type ShoppingListExportItem = {
+    name: string
+    category: string
     quantity: number
-    unitPrice: number
-    pricingMode?: PricingMode
-  }[]
-}
+    unit: string
+  }
 
-type PurchaseSummary = {
-  id: number
-  storeName: string
-  purchaseDate: string
-  totalCents: number
-  itemCount: number
-}
+  type PurchaseSummary = {
+    id: number
+    storeName: string
+    purchaseDate: string
+    totalCents: number
+    itemCount: number
+  }
 
-type PricingMode = 'item_total' | 'unit_measure'
+  type PricingMode = 'item_total' | 'unit_measure'
 
-type PriceHistoryEntry = {
-  id: number
-  productId: number
-  productName: string
-  unit: string
-  storeName: string
-  purchaseDate: string
-  quantity: number
-  totalPaidCents: number
-  comparableUnitPriceCents: number | null
-  pricingMode: PricingMode | null
-}
+  type PriceHistoryEntry = {
+    id: number
+    productId: number
+    productName: string
+    unit: string
+    storeName: string
+    purchaseDate: string
+    quantity: number
+    totalPaidCents: number
+    comparableUnitPriceCents: number | null
+    pricingMode: PricingMode | null
+  }
 
-type DashboardSummary = {
-  monthlySpendCents: number
-  productCount: number
-  lowStockCount: number
-  monthlyPurchaseCount: number
-}
+  type DashboardSummary = {
+    monthlySpendCents: number
+    productCount: number
+    lowStockCount: number
+    monthlyPurchaseCount: number
+  }
 
   type NewProduct = {
     name: string
@@ -75,11 +94,19 @@ type DashboardSummary = {
       purchases: {
         list: () => Promise<PurchaseSummary[]>
         add: (purchase: NewPurchase) => Promise<PurchaseSummary>
+        addImported: (purchase: ImportedPurchaseInput) => Promise<{
+          purchase: PurchaseSummary
+          createdProducts: Product[]
+        }>
         remove: (purchaseId: number) => Promise<void>
       }
 
       stockChecks: {
         record: (items: { productId: number; countedQuantity: number }[]) => Promise<void>
+      }
+
+      shoppingList: {
+        exportPdf: (items: ShoppingListExportItem[]) => Promise<boolean>
       }
 
       prices: {

@@ -29,6 +29,18 @@ export type NewPurchase = {
   }[]
 }
 
+export type NewImportedPurchase = {
+  storeName: string
+  purchaseDate: string
+  items: {
+    productId?: number
+    newProduct?: NewProduct
+    quantity: number
+    unitPrice: number
+    pricingMode?: PricingMode
+  }[]
+}
+
 export type StockCheckInput = {
   productId: number
   countedQuantity: number
@@ -270,7 +282,7 @@ export function restoreProduct(productId: number): void {
   restore()
 }
 
-export function addProduct(input: NewProduct): Product {
+function insertProduct(input: NewProduct): Product {
   if (!database) throw new Error('O banco de dados ainda não foi iniciado.')
 
   const name = input.name.trim()
@@ -315,7 +327,11 @@ export function addProduct(input: NewProduct): Product {
       WHERE id = ? AND is_archived = 0
     `)
     .get(result.lastInsertRowid) as Product
-  }
+}
+
+export function addProduct(input: NewProduct): Product {
+  return insertProduct(input)
+}
 
   export function getPurchases(): PurchaseSummary[] {
   if (!database) throw new Error('O banco de dados ainda não foi iniciado.')
@@ -336,7 +352,7 @@ export function addProduct(input: NewProduct): Product {
     .all() as PurchaseSummary[]
 }
 
-export function addPurchase(input: NewPurchase): PurchaseSummary {
+function savePurchase(input: NewPurchase): PurchaseSummary {
   if (!database) throw new Error('O banco de dados ainda não foi iniciado.')
 
   const storeName = input.storeName.trim()
@@ -346,86 +362,85 @@ export function addPurchase(input: NewPurchase): PurchaseSummary {
   }
   if (input.items.length === 0) throw new Error('Adicione pelo menos um produto.')
 
-  const savePurchase = database.transaction(() => {
-    const purchaseResult = database!
-      .prepare('INSERT INTO purchases (store_name, purchase_date, total_cents) VALUES (?, ?, 0)')
-      .run(storeName, input.purchaseDate)
+  const purchaseResult = database
+    .prepare('INSERT INTO purchases (store_name, purchase_date, total_cents) VALUES (?, ?, 0)')
+    .run(storeName, input.purchaseDate)
 
-    const purchaseId = Number(purchaseResult.lastInsertRowid)
-    let totalCents = 0
+  const purchaseId = Number(purchaseResult.lastInsertRowid)
+  let totalCents = 0
 
-    const findProduct = database!.prepare(`
+  const findProduct = database.prepare(`
       SELECT id, unit, pricing_mode AS pricingMode
       FROM products
       WHERE id = ? AND is_archived = 0
     `)
-    const insertItem = database!.prepare(`
+  const insertItem = database.prepare(`
       INSERT INTO purchase_items
         (purchase_id, product_id, quantity, unit_price_cents, line_total_cents, pricing_mode, unit_snapshot)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
-    const updateStock = database!.prepare(
-      'UPDATE products SET quantity = quantity + ? WHERE id = ?'
-    )
+  const updateStock = database.prepare(
+    'UPDATE products SET quantity = quantity + ? WHERE id = ?'
+  )
 
-    for (const item of input.items) {
-      if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
-        throw new Error('A quantidade de cada item precisa ser maior que zero.')
-      }
-      if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
-        throw new Error('O preço de cada item precisa ser igual ou maior que zero.')
-      }
-      const enteredPriceCents = Math.round(item.unitPrice * 100)
-      if (!Number.isSafeInteger(enteredPriceCents)) {
-        throw new Error('O preço informado é muito alto.')
-      }
-      const product = findProduct.get(item.productId) as
-        | { id: number; unit: string; pricingMode: PricingMode }
-        | undefined
-      if (!product) {
-        throw new Error('Um dos produtos selecionados não existe mais no estoque.')
-      }
-      const pricingMode = item.pricingMode ?? product.pricingMode
-      validatePricingMode(pricingMode)
+  for (const item of input.items) {
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      throw new Error('A quantidade de cada item precisa ser maior que zero.')
+    }
+    if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+      throw new Error('O preço de cada item precisa ser igual ou maior que zero.')
+    }
+    const enteredPriceCents = Math.round(item.unitPrice * 100)
+    if (!Number.isSafeInteger(enteredPriceCents)) {
+      throw new Error('O preço informado é muito alto.')
+    }
+    const product = findProduct.get(item.productId) as
+      | { id: number; unit: string; pricingMode: PricingMode }
+      | undefined
+    if (!product) {
+      throw new Error('Um dos produtos selecionados não existe mais no estoque.')
+    }
+    const pricingMode = item.pricingMode ?? product.pricingMode
+    validatePricingMode(pricingMode)
 
-      const comparableQuantity = getComparableQuantity(item.quantity, product.unit)
-      if (!Number.isFinite(comparableQuantity) || comparableQuantity <= 0) {
-        throw new Error('A quantidade informada não é válida para a unidade do produto.')
-      }
-      const lineTotalCents =
-        pricingMode === 'item_total'
-          ? enteredPriceCents
-          : Math.round(enteredPriceCents * comparableQuantity)
-      if (!Number.isSafeInteger(lineTotalCents)) {
-        throw new Error('O total calculado para o item é muito alto.')
-      }
-      const unitPriceCents =
-        pricingMode === 'item_total'
-          ? Math.round(lineTotalCents / comparableQuantity)
-          : enteredPriceCents
-      totalCents += lineTotalCents
-      if (!Number.isSafeInteger(totalCents)) {
-        throw new Error('O total calculado para a compra é muito alto.')
-      }
-
-      insertItem.run(
-        purchaseId,
-        item.productId,
-        item.quantity,
-        unitPriceCents,
-        lineTotalCents,
-        pricingMode,
-        product.unit
-      )
-      updateStock.run(item.quantity, item.productId)
+    const comparableQuantity = getComparableQuantity(item.quantity, product.unit)
+    if (!Number.isFinite(comparableQuantity) || comparableQuantity <= 0) {
+      throw new Error('A quantidade informada não é válida para a unidade do produto.')
+    }
+    const lineTotalCents =
+      pricingMode === 'item_total'
+        ? enteredPriceCents
+        : Math.round(enteredPriceCents * comparableQuantity)
+    if (!Number.isSafeInteger(lineTotalCents)) {
+      throw new Error('O total calculado para o item é muito alto.')
+    }
+    const unitPriceCents =
+      pricingMode === 'item_total'
+        ? Math.round(lineTotalCents / comparableQuantity)
+        : enteredPriceCents
+    totalCents += lineTotalCents
+    if (!Number.isSafeInteger(totalCents)) {
+      throw new Error('O total calculado para a compra é muito alto.')
     }
 
-    database!
-      .prepare('UPDATE purchases SET total_cents = ? WHERE id = ?')
-      .run(totalCents, purchaseId)
+    insertItem.run(
+      purchaseId,
+      item.productId,
+      item.quantity,
+      unitPriceCents,
+      lineTotalCents,
+      pricingMode,
+      product.unit
+    )
+    updateStock.run(item.quantity, item.productId)
+  }
 
-    return database!
-      .prepare(`
+  database
+    .prepare('UPDATE purchases SET total_cents = ? WHERE id = ?')
+    .run(totalCents, purchaseId)
+
+  return database
+    .prepare(`
         SELECT
           purchases.id,
           purchases.store_name AS storeName,
@@ -437,10 +452,62 @@ export function addPurchase(input: NewPurchase): PurchaseSummary {
         WHERE purchases.id = ?
         GROUP BY purchases.id
       `)
-      .get(purchaseId) as PurchaseSummary
-  })
+    .get(purchaseId) as PurchaseSummary
+}
 
-  return savePurchase()
+export function addPurchase(input: NewPurchase): PurchaseSummary {
+  if (!database) throw new Error('O banco de dados ainda não foi iniciado.')
+  return database.transaction(() => savePurchase(input))()
+}
+
+export function addImportedPurchase(
+  input: NewImportedPurchase
+): { purchase: PurchaseSummary; createdProducts: Product[] } {
+  if (!database) throw new Error('O banco de dados ainda não foi iniciado.')
+
+  return database.transaction(() => {
+    const createdProducts: Product[] = []
+    const items = input.items.map((item) => {
+      if (item.productId !== undefined && item.newProduct) {
+        throw new Error('Selecione um produto existente ou cadastre um novo, não ambos.')
+      }
+      if (item.productId === undefined && !item.newProduct) {
+        throw new Error('Vincule cada item a um produto ou preencha os dados para cadastrá-lo.')
+      }
+
+      let productId = item.productId
+      if (item.newProduct) {
+        const product = insertProduct({ ...item.newProduct, quantity: 0 })
+        createdProducts.push(product)
+        productId = product.id
+      }
+      if (productId === undefined) {
+        throw new Error('Vincule cada item a um produto ou preencha os dados para cadastrá-lo.')
+      }
+
+      return {
+        productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        pricingMode: item.pricingMode
+      }
+    })
+
+    const purchase = savePurchase({
+      storeName: input.storeName,
+      purchaseDate: input.purchaseDate,
+      items
+    })
+    return {
+      purchase,
+      createdProducts: createdProducts.map((product) => ({
+        ...product,
+        quantity: items
+          .filter((item) => item.productId === product.id)
+          .reduce((quantity, item) => quantity + item.quantity, 0)
+      }))
+    }
+  })()
 }
 
 export type DashboardSummary = {
