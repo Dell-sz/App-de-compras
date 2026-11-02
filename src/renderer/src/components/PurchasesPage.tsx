@@ -1,7 +1,18 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { ClipboardPaste, Plus, ReceiptText, Trash2, X } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  ArrowLeft,
+  ArchiveRestore,
+  ClipboardPaste,
+  Eye,
+  Plus,
+  ReceiptText,
+  Trash2,
+  Undo2,
+  X
+} from 'lucide-react'
 
 type PurchaseLine = {
+  category: string
   productId: string
   quantity: string
   unitPrice: string
@@ -14,6 +25,7 @@ type ImportedPurchaseLine = {
   value: string
   isItemTotal: boolean
   productId: string
+  category: string
   newProduct: NewProduct
 }
 
@@ -28,6 +40,9 @@ type ParsedPurchaseText = {
     isItemTotal: boolean
   }[]
 }
+
+type PurchaseUndoAction =
+  { kind: 'trash'; purchase: PurchaseSummary } | { kind: 'restore'; purchase: PurchaseSummary }
 
 const receiptUnitPattern = 'UNIDADE|UNID|UND|UN|KG|G|L|LT|ML|PCT|PAC|PC|PÇ|CX|FD|DZ|SC|BAND|BDJ'
 
@@ -48,9 +63,8 @@ function parseReceiptNumber(value: string): number | null {
 }
 
 function parseReceiptQuantity(value: string): number | null {
-  const parsed = value.includes('.') && !value.includes(',')
-    ? Number(value)
-    : parseReceiptNumber(value)
+  const parsed =
+    value.includes('.') && !value.includes(',') ? Number(value) : parseReceiptNumber(value)
   return parsed !== null && Number.isFinite(parsed) ? parsed : null
 }
 
@@ -141,10 +155,7 @@ function parseReceiptBlock(
   totalLine: string
 ): ParsedPurchaseText['items'][number] | null {
   const quantityMatch = quantityLine.match(
-    new RegExp(
-      `^quantidade\\s*:?\\s*(\\d+(?:[.,]\\d+)?)\\s+(${receiptUnitPattern})\\.?$`,
-      'i'
-    )
+    new RegExp(`^quantidade\\s*:?\\s*(\\d+(?:[.,]\\d+)?)\\s+(${receiptUnitPattern})\\.?$`, 'i')
   )
   const totalMatch = totalLine.match(
     /^(?:valor\s+total(?:\s+do\s+item)?|vl\.?\s*total|total)\s*:?\s*(?:R\$\s*)?([\d.,]+)$/i
@@ -299,32 +310,94 @@ function formatMoney(cents: number): string {
   })
 }
 
-function PurchasesPage(): React.JSX.Element {
+type PurchasesPageProps = {
+  view: 'register' | 'history'
+}
+
+function PurchasesPage({ view }: PurchasesPageProps): React.JSX.Element {
   const [products, setProducts] = useState<Product[]>([])
   const [purchases, setPurchases] = useState<PurchaseSummary[]>([])
+  const [trashedPurchases, setTrashedPurchases] = useState<TrashedPurchase[]>([])
+  const [storeSuggestions, setStoreSuggestions] = useState<string[]>([])
+  const [historyStartDate, setHistoryStartDate] = useState('')
+  const [historyEndDate, setHistoryEndDate] = useState('')
+  const [historyYear, setHistoryYear] = useState('')
+  const [historyStore, setHistoryStore] = useState('')
   const [storeName, setStoreName] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(todayAsInputValue())
   const [items, setItems] = useState<PurchaseLine[]>([
-    { productId: '', quantity: '1', unitPrice: '' }
+    { category: '', productId: '', quantity: '1', unitPrice: '' }
   ])
   const [loading, setLoading] = useState(true)
+  const [isTrashOpen, setIsTrashOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deletingPurchaseId, setDeletingPurchaseId] = useState<number | null>(null)
+  const [workingTrashPurchaseId, setWorkingTrashPurchaseId] = useState<number | null>(null)
   const [isImportOpen, setIsImportOpen] = useState(false)
   const [receiptText, setReceiptText] = useState('')
   const [importedStoreName, setImportedStoreName] = useState('')
+  const [importedPaymentMethod, setImportedPaymentMethod] = useState('')
   const [importedPurchaseDate, setImportedPurchaseDate] = useState(todayAsInputValue())
   const [importedItems, setImportedItems] = useState<ImportedPurchaseLine[]>([])
   const [importError, setImportError] = useState('')
   const [isImportPreview, setIsImportPreview] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-
+  const [undoAction, setUndoAction] = useState<PurchaseUndoAction | null>(null)
+  const [purchaseDetails, setPurchaseDetails] = useState<PurchaseDetails | null>(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsError, setDetailsError] = useState('')
+  const detailsRequestId = useRef(0)
+  const categories = [
+    ...new Set(products.map((product) => product.category.trim()).filter(Boolean))
+  ].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  const purchaseCategories = categories.length > 0 ? categories : ['Outros']
+  const paymentMethods = [
+    'Dinheiro',
+    'Pix',
+    'Cartão de débito',
+    'Cartão de crédito',
+    'Transferência',
+    'Outro'
+  ]
+  const historyYears = [
+    ...new Set(purchases.map((purchase) => purchase.purchaseDate.slice(0, 4)))
+  ].sort((a, b) => b.localeCompare(a))
+  const historyStores = [
+    ...new Set(purchases.map((purchase) => purchase.storeName.trim()).filter(Boolean))
+  ].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  const filteredPurchases = purchases
+    .filter(
+      (purchase) =>
+        (!historyStartDate || purchase.purchaseDate >= historyStartDate) &&
+        (!historyEndDate || purchase.purchaseDate <= historyEndDate) &&
+        (!historyYear || purchase.purchaseDate.startsWith(historyYear)) &&
+        (!historyStore || purchase.storeName === historyStore)
+    )
+    .sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate) || b.id - a.id)
   useEffect(() => {
-    Promise.all([window.api.products.list(), window.api.purchases.list()])
-      .then(([productList, purchaseList]) => {
+    Promise.all([
+      window.api.products.list(),
+      window.api.purchases.list(),
+      window.api.purchases.listTrash(),
+      window.api.purchases.storeSuggestions()
+    ])
+      .then(([productList, purchaseList, trashList, suggestions]) => {
         setProducts(productList)
         setPurchases(purchaseList)
+        setTrashedPurchases(trashList)
+        const recentStores = [
+          ...new Set(purchaseList.map((purchase) => purchase.storeName.trim()).filter(Boolean))
+        ].slice(0, 6)
+        const uniqueStores = new Map<string, string>()
+        for (const name of [...recentStores, ...suggestions]) {
+          const normalizedName = name.trim().toLocaleLowerCase('pt-BR')
+          if (normalizedName && !uniqueStores.has(normalizedName)) {
+            uniqueStores.set(normalizedName, name.trim())
+          }
+        }
+        setStoreSuggestions([...uniqueStores.values()].slice(0, 12))
       })
       .catch(() => setError('Não foi possível carregar os dados.'))
       .finally(() => setLoading(false))
@@ -332,16 +405,22 @@ function PurchasesPage(): React.JSX.Element {
 
   function updateItem(index: number, field: keyof PurchaseLine, value: string): void {
     setItems((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, [field]: value } : item
-      )
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) return item
+        if (field === 'productId') {
+          const product = products.find((candidate) => candidate.id === Number(value))
+          return { ...item, productId: value, category: product?.category ?? item.category }
+        }
+        if (field === 'category') return { ...item, category: value, productId: '' }
+        return { ...item, [field]: value }
+      })
     )
   }
 
   function addItemRow(): void {
     setItems((current) => [
       ...current,
-      { productId: '', quantity: '1', unitPrice: '' }
+      { category: '', productId: '', quantity: '1', unitPrice: '' }
     ])
   }
 
@@ -349,22 +428,28 @@ function PurchasesPage(): React.JSX.Element {
     setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))
   }
 
-  const total = items.reduce(
-    (sum, item) => {
-      const product = products.find((candidate) => candidate.id === Number(item.productId))
-      const enteredPrice = Number(item.unitPrice) || 0
-      const quantity = Number(item.quantity) || 0
-      if (!product || product.pricingMode === 'item_total') return sum + enteredPrice
-      return sum + enteredPrice * getComparableQuantity(quantity, product.unit)
-    },
-    0
-  )
+  const total = items.reduce((sum, item) => {
+    const product = products.find((candidate) => candidate.id === Number(item.productId))
+    const enteredPrice = Number(item.unitPrice) || 0
+    const quantity = Number(item.quantity) || 0
+    if (!product || product.pricingMode === 'item_total') return sum + enteredPrice
+    return sum + enteredPrice * getComparableQuantity(quantity, product.unit)
+  }, 0)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     setError('')
     setSuccess('')
+    setUndoAction(null)
 
+    if (purchaseDate > todayAsInputValue()) {
+      setError('A data da compra não pode ser futura.')
+      return
+    }
+    if (!paymentMethod) {
+      setError('Selecione a forma de pagamento.')
+      return
+    }
     const validItems = items.filter(
       (item) =>
         item.productId &&
@@ -386,6 +471,7 @@ function PurchasesPage(): React.JSX.Element {
       const purchase = await window.api.purchases.add({
         storeName,
         purchaseDate,
+        paymentMethod,
         items: validItems.map((item) => ({
           productId: Number(item.productId),
           quantity: Number(item.quantity),
@@ -394,11 +480,20 @@ function PurchasesPage(): React.JSX.Element {
       })
 
       setPurchases((current) => [purchase, ...current])
+      setStoreSuggestions((current) =>
+        [
+          storeName.trim(),
+          ...current.filter(
+            (name) => name.toLocaleLowerCase() !== storeName.trim().toLocaleLowerCase()
+          )
+        ].slice(0, 12)
+      )
       setSuccess('Compra salva e estoque atualizado.')
       window.dispatchEvent(new Event('app:data-changed'))
       setStoreName('')
+      setPaymentMethod('')
       setPurchaseDate(todayAsInputValue())
-      setItems([{ productId: '', quantity: '1', unitPrice: '' }])
+      setItems([{ category: '', productId: '', quantity: '1', unitPrice: '' }])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível salvar a compra.')
     } finally {
@@ -409,15 +504,42 @@ function PurchasesPage(): React.JSX.Element {
   function openImport(): void {
     setReceiptText('')
     setImportedStoreName('')
+    setImportedPaymentMethod('')
     setImportedPurchaseDate(todayAsInputValue())
     setImportedItems([])
     setImportError('')
     setIsImportPreview(false)
     setError('')
     setSuccess('')
+    setUndoAction(null)
     setIsImportOpen(true)
   }
 
+  async function openPurchaseDetails(purchaseId: number): Promise<void> {
+    const requestId = ++detailsRequestId.current
+    setDetailsError('')
+    setPurchaseDetails(null)
+    setDetailsLoading(true)
+    try {
+      const details = await window.api.purchases.details(purchaseId)
+      if (requestId === detailsRequestId.current) setPurchaseDetails(details)
+    } catch (err) {
+      if (requestId === detailsRequestId.current) {
+        setDetailsError(
+          err instanceof Error ? err.message : 'Não foi possível carregar os detalhes.'
+        )
+      }
+    } finally {
+      if (requestId === detailsRequestId.current) setDetailsLoading(false)
+    }
+  }
+
+  function closePurchaseDetails(): void {
+    detailsRequestId.current += 1
+    setDetailsLoading(false)
+    setPurchaseDetails(null)
+    setDetailsError('')
+  }
   function handleParseReceipt(): void {
     setImportError('')
     const parsed = parseReceiptText(receiptText)
@@ -440,9 +562,10 @@ function PurchasesPage(): React.JSX.Element {
         return {
           ...item,
           productId: matchingProduct ? String(matchingProduct.id) : '',
+          category: matchingProduct?.category ?? categories[0] ?? 'Outros',
           newProduct: {
             name: item.description,
-            category: 'Outros',
+            category: matchingProduct?.category ?? categories[0] ?? 'Outros',
             unit: getProductUnitFromReceipt(item.unit),
             quantity: 0,
             minimumQuantity: 0,
@@ -460,15 +583,34 @@ function PurchasesPage(): React.JSX.Element {
     value: string
   ): void {
     setImportedItems((current) =>
-      current.map((item, itemIndex) => (itemIndex === index ? { ...item, [field]: value } : item))
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) return item
+        if (field === 'category') {
+          return {
+            ...item,
+            category: value,
+            productId: '',
+            newProduct: { ...item.newProduct, category: value }
+          }
+        }
+        if (field === 'productId') {
+          const product = products.find((candidate) => candidate.id === Number(value))
+          return {
+            ...item,
+            productId: value,
+            category: product?.category ?? item.category,
+            newProduct: {
+              ...item.newProduct,
+              category: product?.category ?? item.category
+            }
+          }
+        }
+        return { ...item, [field]: value }
+      })
     )
   }
 
-  function updateNewProduct(
-    index: number,
-    field: keyof NewProduct,
-    value: string
-  ): void {
+  function updateNewProduct(index: number, field: keyof NewProduct, value: string): void {
     setImportedItems((current) =>
       current.map((item, itemIndex) => {
         if (itemIndex !== index) return item
@@ -498,6 +640,7 @@ function PurchasesPage(): React.JSX.Element {
   async function handleConfirmImport(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     setImportError('')
+    setUndoAction(null)
 
     if (importedItems.length === 0) {
       setImportError('Adicione pelo menos um item à compra.')
@@ -526,8 +669,7 @@ function PurchasesPage(): React.JSX.Element {
         !item.productId &&
         products.some(
           (product) =>
-            normalizeProductName(product.name) ===
-            normalizeProductName(item.newProduct.name)
+            normalizeProductName(product.name) === normalizeProductName(item.newProduct.name)
         )
     )
     if (duplicateProduct) {
@@ -537,11 +679,19 @@ function PurchasesPage(): React.JSX.Element {
       return
     }
     if (!importedStoreName.trim()) {
-      setImportError('Informe o mercado da compra.')
+      setImportError('Informe o estabelecimento da compra.')
+      return
+    }
+    if (!importedPaymentMethod) {
+      setImportError('Selecione a forma de pagamento.')
       return
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(importedPurchaseDate)) {
       setImportError('Informe uma data válida.')
+      return
+    }
+    if (importedPurchaseDate > todayAsInputValue()) {
+      setImportError('A data da compra não pode ser futura.')
       return
     }
 
@@ -550,10 +700,9 @@ function PurchasesPage(): React.JSX.Element {
       const { purchase, createdProducts } = await window.api.purchases.addImported({
         storeName: importedStoreName,
         purchaseDate: importedPurchaseDate,
+        paymentMethod: importedPaymentMethod,
         items: importedItems.map((item) => {
-          const linkedProduct = products.find(
-            (product) => product.id === Number(item.productId)
-          )
+          const linkedProduct = products.find((product) => product.id === Number(item.productId))
           return {
             ...(linkedProduct
               ? { productId: linkedProduct.id }
@@ -570,12 +719,20 @@ function PurchasesPage(): React.JSX.Element {
             unitPrice: Number(item.value),
             pricingMode: item.isItemTotal
               ? 'item_total'
-              : linkedProduct?.pricingMode ?? item.newProduct.pricingMode
+              : (linkedProduct?.pricingMode ?? item.newProduct.pricingMode)
           }
         })
       })
 
       setPurchases((current) => [purchase, ...current])
+      setStoreSuggestions((current) =>
+        [
+          importedStoreName.trim(),
+          ...current.filter(
+            (name) => name.toLocaleLowerCase() !== importedStoreName.trim().toLocaleLowerCase()
+          )
+        ].slice(0, 12)
+      )
       setProducts((current) =>
         [...current, ...createdProducts].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
       )
@@ -594,7 +751,9 @@ function PurchasesPage(): React.JSX.Element {
     const linkedProduct = products.find((product) => product.id === Number(item.productId))
     const usesItemTotal =
       item.isItemTotal ||
-      (linkedProduct ? linkedProduct.pricingMode === 'item_total' : item.newProduct.pricingMode === 'item_total')
+      (linkedProduct
+        ? linkedProduct.pricingMode === 'item_total'
+        : item.newProduct.pricingMode === 'item_total')
 
     return (
       <div
@@ -606,6 +765,24 @@ function PurchasesPage(): React.JSX.Element {
             <strong>{item.description}</strong>
             <span>Unidade na nota: {item.unit}</span>
           </div>
+          <label className="form-field import-category-field">
+            {item.productId ? 'Categoria' : 'Categoria sugerida'}
+            <select
+              value={item.category}
+              onChange={(event) => updateImportedItem(index, 'category', event.target.value)}
+            >
+              {purchaseCategories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+            {!item.productId && (
+              <small className="form-hint import-category-hint">
+                Sugestões baseadas nas categorias existentes no estoque.
+              </small>
+            )}
+          </label>
           <label className="form-field import-product-field">
             Produto do estoque
             <select
@@ -613,11 +790,13 @@ function PurchasesPage(): React.JSX.Element {
               onChange={(event) => updateImportedItem(index, 'productId', event.target.value)}
             >
               <option value="">Cadastrar como novo produto</option>
-              {products.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.name} ({product.unit})
-                </option>
-              ))}
+              {products
+                .filter((product) => product.category === item.category)
+                .map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name} ({product.unit})
+                  </option>
+                ))}
             </select>
           </label>
           <label className="form-field import-quantity-field">
@@ -650,9 +829,7 @@ function PurchasesPage(): React.JSX.Element {
             aria-label={`Remover ${item.description}`}
             disabled={importedItems.length === 1}
             onClick={() =>
-              setImportedItems((current) =>
-                current.filter((_, itemIndex) => itemIndex !== index)
-              )
+              setImportedItems((current) => current.filter((_, itemIndex) => itemIndex !== index))
             }
           >
             <Trash2 size={16} />
@@ -667,14 +844,6 @@ function PurchasesPage(): React.JSX.Element {
                 required
                 value={item.newProduct.name}
                 onChange={(event) => updateNewProduct(index, 'name', event.target.value)}
-              />
-            </label>
-            <label className="form-field">
-              Categoria
-              <input
-                required
-                value={item.newProduct.category}
-                onChange={(event) => updateNewProduct(index, 'category', event.target.value)}
               />
             </label>
             <label className="form-field">
@@ -693,9 +862,7 @@ function PurchasesPage(): React.JSX.Element {
                 min="0"
                 step="any"
                 value={item.newProduct.minimumQuantity}
-                onChange={(event) =>
-                  updateNewProduct(index, 'minimumQuantity', event.target.value)
-                }
+                onChange={(event) => updateNewProduct(index, 'minimumQuantity', event.target.value)}
               />
             </label>
             <label className="form-field import-pricing-mode-field">
@@ -717,23 +884,103 @@ function PurchasesPage(): React.JSX.Element {
     )
   }
 
-  async function handleDeletePurchase(purchase: PurchaseSummary): Promise<void> {
+  async function handleTrashPurchase(purchase: PurchaseSummary): Promise<void> {
     const confirmed = window.confirm(
-      'Excluir esta compra removerá permanentemente a compra do histórico, os preços associados do histórico de preços e as quantidades correspondentes do estoque. Esta ação não pode ser desfeita. Deseja continuar?'
+      'Mover esta compra para a lixeira? Ela deixará os históricos e indicadores, e o estoque será ajustado sem ficar negativo. Você poderá restaurá-la por até 30 dias.'
     )
     if (!confirmed) return
 
     setError('')
     setSuccess('')
+    setUndoAction(null)
     setDeletingPurchaseId(purchase.id)
 
     try {
-      await window.api.purchases.remove(purchase.id)
+      const trashedPurchase = await window.api.purchases.trash(purchase.id)
       setPurchases((current) => current.filter((item) => item.id !== purchase.id))
-      setSuccess('Compra excluída.')
+      setTrashedPurchases((current) => [trashedPurchase, ...current])
+      setSuccess('Compra movida para a lixeira. Ela poderá ser restaurada por até 30 dias.')
+      setUndoAction({ kind: 'trash', purchase })
       window.dispatchEvent(new Event('app:data-changed'))
     } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Não foi possível mover a compra para a lixeira.'
+      )
+    } finally {
+      setDeletingPurchaseId(null)
+    }
+  }
+
+  async function handleRestorePurchase(purchase: TrashedPurchase): Promise<void> {
+    setError('')
+    setSuccess('')
+    setUndoAction(null)
+    setWorkingTrashPurchaseId(purchase.id)
+    try {
+      const restoredPurchase = await window.api.purchases.restore(purchase.id)
+      setTrashedPurchases((current) => current.filter((item) => item.id !== purchase.id))
+      setPurchases((current) =>
+        [restoredPurchase, ...current].sort(
+          (a, b) => b.purchaseDate.localeCompare(a.purchaseDate) || b.id - a.id
+        )
+      )
+      setSuccess('Compra restaurada e ajuste de estoque revertido.')
+      setUndoAction({ kind: 'restore', purchase: restoredPurchase })
+      window.dispatchEvent(new Event('app:data-changed'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível restaurar a compra.')
+    } finally {
+      setWorkingTrashPurchaseId(null)
+    }
+  }
+
+  async function handlePermanentlyDeletePurchase(purchase: TrashedPurchase): Promise<void> {
+    const confirmed = window.confirm(
+      `Excluir permanentemente a compra de ${purchase.storeName}? Os itens e preços associados serão removidos definitivamente. O estoque já foi ajustado ao mover a compra para a lixeira. Esta ação não pode ser desfeita.`
+    )
+    if (!confirmed) return
+
+    setError('')
+    setSuccess('')
+    setUndoAction(null)
+    setWorkingTrashPurchaseId(purchase.id)
+    try {
+      await window.api.purchases.permanentlyDelete(purchase.id)
+      setTrashedPurchases((current) => current.filter((item) => item.id !== purchase.id))
+      setSuccess('Compra excluída permanentemente.')
+    } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível excluir a compra.')
+    } finally {
+      setWorkingTrashPurchaseId(null)
+    }
+  }
+
+  async function handleUndoPurchaseAction(): Promise<void> {
+    if (!undoAction) return
+    setError('')
+    setDeletingPurchaseId(undoAction.purchase.id)
+    try {
+      if (undoAction.kind === 'trash') {
+        const restoredPurchase = await window.api.purchases.restore(undoAction.purchase.id)
+        setTrashedPurchases((current) =>
+          current.filter((item) => item.id !== undoAction.purchase.id)
+        )
+        setPurchases((current) =>
+          [restoredPurchase, ...current].sort(
+            (a, b) => b.purchaseDate.localeCompare(a.purchaseDate) || b.id - a.id
+          )
+        )
+        setSuccess('Ação desfeita. A compra foi restaurada e o estoque atualizado.')
+      } else {
+        const trashedPurchase = await window.api.purchases.trash(undoAction.purchase.id)
+        setPurchases((current) => current.filter((item) => item.id !== undoAction.purchase.id))
+        setTrashedPurchases((current) => [trashedPurchase, ...current])
+        setSuccess('Ação desfeita. A compra voltou para a lixeira.')
+      }
+      setUndoAction(null)
+      window.dispatchEvent(new Event('app:data-changed'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível desfazer esta ação.')
     } finally {
       setDeletingPurchaseId(null)
     }
@@ -741,22 +988,43 @@ function PurchasesPage(): React.JSX.Element {
 
   return (
     <section className="purchase-page">
-      <div className="purchase-intro">
-        <div>
-          <h2>Registrar compra</h2>
-          <p>Adicione os produtos comprados para atualizar o estoque e os preços.</p>
+      <datalist id="purchase-establishment-suggestions">
+        {storeSuggestions.map((suggestion) => (
+          <option key={suggestion} value={suggestion} />
+        ))}
+      </datalist>
+      {view === 'register' && (
+        <div className="purchase-intro">
+          <div>
+            <h2>Registrar compra</h2>
+            <p>Adicione os produtos comprados para atualizar o estoque e os preços.</p>
+          </div>
+          <button
+            type="button"
+            className="secondary-button purchase-import-trigger"
+            onClick={openImport}
+          >
+            <ClipboardPaste size={15} /> Importar texto da nota
+          </button>
         </div>
-        <button
-          type="button"
-          className="secondary-button purchase-import-trigger"
-          onClick={openImport}
-        >
-          <ClipboardPaste size={15} /> Importar texto da nota
-        </button>
-      </div>
+      )}
 
       {error && <div className="error-message">{error}</div>}
-      {success && <div className="success-message">{success}</div>}
+      {success && (
+        <div className="success-message">
+          {success}
+          {undoAction && (
+            <button
+              type="button"
+              className="undo-action-button"
+              disabled={deletingPurchaseId !== null}
+              onClick={handleUndoPurchaseAction}
+            >
+              <Undo2 size={14} /> Desfazer
+            </button>
+          )}
+        </div>
+      )}
 
       {isImportOpen && (
         <div
@@ -824,12 +1092,13 @@ function PurchasesPage(): React.JSX.Element {
               <form onSubmit={handleConfirmImport}>
                 <div className="form-row">
                   <label className="form-field">
-                    Mercado
+                    Estabelecimento
                     <input
                       required
                       value={importedStoreName}
                       onChange={(event) => setImportedStoreName(event.target.value)}
-                      placeholder="Nome do mercado"
+                      list="purchase-establishment-suggestions"
+                      placeholder="Selecione ou digite um estabelecimento"
                     />
                   </label>
                   <label className="form-field">
@@ -837,17 +1106,33 @@ function PurchasesPage(): React.JSX.Element {
                     <input
                       required
                       type="date"
+                      max={todayAsInputValue()}
                       value={importedPurchaseDate}
                       onChange={(event) => setImportedPurchaseDate(event.target.value)}
                     />
                   </label>
                 </div>
+                <label className="form-field">
+                  Forma de pagamento
+                  <select
+                    required
+                    value={importedPaymentMethod}
+                    onChange={(event) => setImportedPaymentMethod(event.target.value)}
+                  >
+                    <option value="">Selecione</option>
+                    {paymentMethods.map((method) => (
+                      <option key={method} value={method}>
+                        {method}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
                 <div className="import-preview-heading">
                   <strong>Prévia dos itens ({importedItems.length})</strong>
                   <span>
-                    Revise os vínculos e os dados de cada linha. Novos produtos só serão
-                    cadastrados ao confirmar a compra.
+                    Revise os vínculos e os dados de cada linha. Novos produtos só serão cadastrados
+                    ao confirmar a compra.
                   </span>
                 </div>
                 {importedItems.some((item) => item.productId) && (
@@ -899,153 +1184,273 @@ function PurchasesPage(): React.JSX.Element {
 
       {loading ? (
         <div className="panel empty-state">Carregando dados...</div>
-      ) : products.length === 0 ? (
-        <div className="panel empty-state">
-          <div className="placeholder-icon"><ReceiptText size={24} /></div>
-          <strong>Cadastre produtos no Estoque primeiro</strong>
-          <span>Depois você poderá selecionar os itens comprados aqui.</span>
+      ) : view === 'register' ? (
+        <div className="purchase-layout">
+          {products.length === 0 ? (
+            <div className="panel empty-state">
+              <div className="placeholder-icon">
+                <ReceiptText size={24} />
+              </div>
+              <strong>Cadastre produtos no Estoque primeiro</strong>
+              <span>Depois você poderá selecionar os itens comprados aqui.</span>
+            </div>
+          ) : (
+            <form className="panel purchase-form" onSubmit={handleSubmit}>
+              <div className="form-row">
+                <label className="form-field">
+                  Estabelecimento
+                  <input
+                    required
+                    value={storeName}
+                    onChange={(event) => setStoreName(event.target.value)}
+                    list="purchase-establishment-suggestions"
+                    placeholder="Selecione ou digite um estabelecimento"
+                  />
+                </label>
+                <label className="form-field">
+                  Data da compra
+                  <input
+                    required
+                    type="date"
+                    max={todayAsInputValue()}
+                    value={purchaseDate}
+                    onChange={(event) => setPurchaseDate(event.target.value)}
+                  />
+                </label>
+              </div>
+              <label className="form-field purchase-payment-field">
+                Forma de pagamento
+                <select
+                  required
+                  value={paymentMethod}
+                  onChange={(event) => setPaymentMethod(event.target.value)}
+                >
+                  <option value="">Selecione</option>
+                  {paymentMethods.map((method) => (
+                    <option key={method} value={method}>
+                      {method}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="purchase-items-heading">
+                <h3>Produtos</h3>
+                <button type="button" className="text-button" onClick={addItemRow}>
+                  <Plus size={15} /> Adicionar item
+                </button>
+              </div>
+
+              <div className="purchase-lines">
+                {items.map((item, index) => {
+                  const selectedProduct = products.find(
+                    (product) => product.id === Number(item.productId)
+                  )
+
+                  return (
+                    <div className="purchase-line" key={index}>
+                      <label className="form-field item-category-field">
+                        Categoria
+                        <select
+                          required
+                          value={item.category}
+                          onChange={(event) => updateItem(index, 'category', event.target.value)}
+                        >
+                          <option value="">Selecione</option>
+                          {purchaseCategories.map((category) => (
+                            <option key={category} value={category}>
+                              {category}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="form-field item-product-field">
+                        Produto
+                        <select
+                          required
+                          value={item.productId}
+                          onChange={(event) => updateItem(index, 'productId', event.target.value)}
+                        >
+                          <option value="">Selecione</option>
+                          {products
+                            .filter(
+                              (product) => !item.category || product.category === item.category
+                            )
+                            .map((product) => (
+                              <option key={product.id} value={product.id}>
+                                {product.name} ({product.unit})
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+
+                      <label className="form-field item-quantity-field">
+                        Quantidade
+                        <input
+                          required
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={item.quantity}
+                          onChange={(event) => updateItem(index, 'quantity', event.target.value)}
+                        />
+                      </label>
+
+                      <label className="form-field item-price-field">
+                        {selectedProduct?.pricingMode === 'unit_measure'
+                          ? `Preço por ${getComparableUnit(selectedProduct.unit)}`
+                          : 'Valor total do item'}
+                        <input
+                          required
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.unitPrice}
+                          onChange={(event) => updateItem(index, 'unitPrice', event.target.value)}
+                          placeholder={
+                            selectedProduct?.pricingMode === 'unit_measure'
+                              ? `R$ / ${getComparableUnit(selectedProduct.unit)}`
+                              : 'Total pago'
+                          }
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        className="remove-line-button"
+                        aria-label="Remover item"
+                        disabled={items.length === 1}
+                        onClick={() => removeItemRow(index)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="purchase-total">
+                <span>Total estimado</span>
+                <strong>
+                  {total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </strong>
+              </div>
+
+              <button
+                type="submit"
+                className="primary-button save-purchase-button"
+                disabled={saving}
+              >
+                {saving ? 'Salvando...' : 'Salvar compra'}
+              </button>
+            </form>
+          )}
         </div>
       ) : (
-        <div className="purchase-layout">
-          <form className="panel purchase-form" onSubmit={handleSubmit}>
-            <div className="form-row">
-              <label className="form-field">
-                Mercado
-                <input
-                  required
-                  value={storeName}
-                  onChange={(event) => setStoreName(event.target.value)}
-                  placeholder="Ex.: Supermercado BH"
-                />
-              </label>
-              <label className="form-field">
-                Data da compra
-                <input
-                  required
-                  type="date"
-                  value={purchaseDate}
-                  onChange={(event) => setPurchaseDate(event.target.value)}
-                />
-              </label>
-            </div>
-
-            <div className="purchase-items-heading">
-              <h3>Produtos</h3>
-              <button type="button" className="text-button" onClick={addItemRow}>
-                <Plus size={15} /> Adicionar item
+        <div className="purchase-history-stack">
+          <section
+            className={`panel purchase-history-panel ${isTrashOpen ? 'covered' : ''}`}
+            aria-hidden={isTrashOpen}
+          >
+            <div className="panel-heading purchase-history-heading">
+              <div>
+                <h2>Compras registradas</h2>
+                <p>Histórico de compras e ajustes ativos</p>
+              </div>
+              <button
+                type="button"
+                className="icon-button purchase-trash-trigger"
+                aria-label="Abrir lixeira de compras"
+                title="Lixeira de compras"
+                onClick={() => setIsTrashOpen(true)}
+              >
+                <Trash2 size={18} />
               </button>
             </div>
-
-            <div className="purchase-lines">
-              {items.map((item, index) => {
-                const selectedProduct = products.find(
-                  (product) => product.id === Number(item.productId)
-                )
-
-                return (
-                  <div className="purchase-line" key={index}>
-                  <label className="form-field item-product-field">
-                    Produto
-                    <select
-                      required
-                      value={item.productId}
-                      onChange={(event) => updateItem(index, 'productId', event.target.value)}
-                    >
-                      <option value="">Selecione</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name} ({product.unit})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="form-field item-quantity-field">
-                    Quantidade
-                    <input
-                      required
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={item.quantity}
-                      onChange={(event) => updateItem(index, 'quantity', event.target.value)}
-                    />
-                  </label>
-
-                  <label className="form-field item-price-field">
-                    {selectedProduct?.pricingMode === 'unit_measure'
-                      ? `Preço por ${getComparableUnit(selectedProduct.unit)}`
-                      : 'Valor total do item'}
-                    <input
-                      required
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={item.unitPrice}
-                      onChange={(event) => updateItem(index, 'unitPrice', event.target.value)}
-                      placeholder={
-                        selectedProduct?.pricingMode === 'unit_measure'
-                          ? `R$ / ${getComparableUnit(selectedProduct.unit)}`
-                          : 'Total pago'
-                      }
-                    />
-                  </label>
-
-                  <button
-                    type="button"
-                    className="remove-line-button"
-                    aria-label="Remover item"
-                    disabled={items.length === 1}
-                    onClick={() => removeItemRow(index)}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                  </div>
-                )
-              })}
+            <div className="purchase-history-filters">
+              <label className="form-field">
+                Data inicial
+                <input
+                  type="date"
+                  value={historyStartDate}
+                  max={historyEndDate || undefined}
+                  onChange={(event) => setHistoryStartDate(event.target.value)}
+                />
+              </label>
+              <label className="form-field">
+                Data final
+                <input
+                  type="date"
+                  value={historyEndDate}
+                  min={historyStartDate || undefined}
+                  onChange={(event) => setHistoryEndDate(event.target.value)}
+                />
+              </label>
+              <label className="form-field">
+                Ano
+                <select
+                  value={historyYear}
+                  onChange={(event) => setHistoryYear(event.target.value)}
+                >
+                  <option value="">Todos os anos</option>
+                  {historyYears.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-field">
+                Estabelecimento
+                <select
+                  value={historyStore}
+                  onChange={(event) => setHistoryStore(event.target.value)}
+                >
+                  <option value="">Todos os estabelecimentos</option>
+                  {historyStores.map((store) => (
+                    <option key={store} value={store}>
+                      {store}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-
-            <div className="purchase-total">
-              <span>Total estimado</span>
-              <strong>
-                {total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </strong>
-            </div>
-
-            <button type="submit" className="primary-button save-purchase-button" disabled={saving}>
-              {saving ? 'Salvando...' : 'Salvar compra'}
-            </button>
-          </form>
-
-          <aside className="panel recent-purchases">
-            <div className="panel-heading">
-              <div>
-                <h2>Histórico de compras</h2>
-                <p>Compras registradas neste app</p>
-              </div>
-            </div>
-
             {purchases.length === 0 ? (
               <p className="recent-empty">Suas compras salvas aparecerão aqui.</p>
+            ) : filteredPurchases.length === 0 ? (
+              <p className="recent-empty">Nenhuma compra corresponde aos filtros selecionados.</p>
             ) : (
-              <div className="recent-purchase-list">
-                {purchases.map((purchase) => (
+              <div className="recent-purchase-list purchase-history-list">
+                {filteredPurchases.map((purchase) => (
                   <div className="recent-purchase-row" key={purchase.id}>
-                    <div className="recent-purchase-icon"><ReceiptText size={17} /></div>
+                    <div className="recent-purchase-icon">
+                      <ReceiptText size={17} />
+                    </div>
                     <div className="recent-purchase-info">
                       <strong>{purchase.storeName}</strong>
-                      <span>{formatDate(purchase.purchaseDate)} · {purchase.itemCount} itens</span>
+                      <span>
+                        {formatDate(purchase.purchaseDate)} · {purchase.itemCount} itens
+                      </span>
                     </div>
                     <strong className="recent-purchase-total">
                       {formatMoney(purchase.totalCents)}
                     </strong>
                     <button
                       type="button"
+                      className="details-purchase-button"
+                      aria-label={`Ver detalhes da compra de ${purchase.storeName}`}
+                      title="Ver detalhes"
+                      onClick={() => void openPurchaseDetails(purchase.id)}
+                    >
+                      <Eye size={16} />
+                    </button>
+                    <button
+                      type="button"
                       className="delete-purchase-button"
-                      aria-label={`Excluir compra de ${purchase.storeName}`}
-                      title="Excluir compra"
-                      disabled={deletingPurchaseId === purchase.id}
-                      onClick={() => handleDeletePurchase(purchase)}
+                      aria-label={`Mover compra de ${purchase.storeName} para a lixeira`}
+                      title="Mover para a lixeira"
+                      disabled={deletingPurchaseId !== null}
+                      onClick={() => handleTrashPurchase(purchase)}
                     >
                       <Trash2 size={15} />
                     </button>
@@ -1053,7 +1458,166 @@ function PurchasesPage(): React.JSX.Element {
                 ))}
               </div>
             )}
-          </aside>
+          </section>
+          {isTrashOpen && (
+            <section
+              className="panel purchase-trash-overlay"
+              role="dialog"
+              aria-labelledby="purchase-trash-title"
+              aria-label="Lixeira de compras"
+              aria-modal="true"
+            >
+              <div className="purchase-trash-page-heading">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setIsTrashOpen(false)}
+                >
+                  <ArrowLeft size={16} /> Voltar ao histórico
+                </button>
+                <div>
+                  <h2 id="purchase-trash-title">Lixeira de compras</h2>
+                  <p>As compras são removidas definitivamente após 30 dias.</p>
+                </div>
+              </div>
+              {trashedPurchases.length === 0 ? (
+                <p className="recent-empty">A lixeira está vazia.</p>
+              ) : (
+                <div className="recent-purchase-list">
+                  {trashedPurchases.map((purchase) => (
+                    <div className="recent-purchase-row trashed-purchase-row" key={purchase.id}>
+                      <div className="recent-purchase-icon">
+                        <ReceiptText size={17} />
+                      </div>
+                      <div className="recent-purchase-info">
+                        <strong>{purchase.storeName}</strong>
+                        <span>
+                          {formatDate(purchase.purchaseDate)} · {purchase.itemCount} itens
+                        </span>
+                        <small>
+                          Exclusão definitiva em{' '}
+                          {new Date(purchase.expiresAt).toLocaleDateString('pt-BR')}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="details-purchase-button"
+                        aria-label={`Ver detalhes da compra de ${purchase.storeName}`}
+                        title="Ver detalhes"
+                        onClick={() => void openPurchaseDetails(purchase.id)}
+                      >
+                        <Eye size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        className="restore-purchase-button"
+                        aria-label={`Restaurar compra de ${purchase.storeName}`}
+                        disabled={workingTrashPurchaseId !== null}
+                        onClick={() => handleRestorePurchase(purchase)}
+                      >
+                        <ArchiveRestore size={15} />
+                        {workingTrashPurchaseId === purchase.id ? 'Restaurando...' : 'Restaurar'}
+                      </button>
+                      <button
+                        type="button"
+                        className="delete-purchase-button"
+                        aria-label={`Excluir permanentemente compra de ${purchase.storeName}`}
+                        title="Excluir permanentemente"
+                        disabled={workingTrashPurchaseId !== null}
+                        onClick={() => handlePermanentlyDeletePurchase(purchase)}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+      )}
+      {(detailsLoading || purchaseDetails || detailsError) && (
+        <div
+          className="modal-backdrop purchase-details-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePurchaseDetails()
+          }}
+        >
+          <section
+            className="product-modal purchase-details-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="purchase-details-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <h2 id="purchase-details-title">Detalhes da compra</h2>
+                <p>Dados do estabelecimento, pagamento e itens registrados.</p>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                aria-label="Fechar detalhes"
+                onClick={closePurchaseDetails}
+              >
+                <X size={17} />
+              </button>
+            </div>
+            {detailsLoading ? (
+              <p className="empty-state">Carregando detalhes...</p>
+            ) : detailsError ? (
+              <div className="error-message">{detailsError}</div>
+            ) : purchaseDetails ? (
+              <>
+                <dl className="purchase-details-summary">
+                  <div>
+                    <dt>Estabelecimento</dt>
+                    <dd>{purchaseDetails.storeName}</dd>
+                  </div>
+                  <div>
+                    <dt>Data</dt>
+                    <dd>{formatDate(purchaseDetails.purchaseDate)}</dd>
+                  </div>
+                  <div>
+                    <dt>Forma de pagamento</dt>
+                    <dd>{purchaseDetails.paymentMethod ?? 'Não informada'}</dd>
+                  </div>
+                </dl>
+                <div className="purchase-details-items">
+                  <div className="purchase-details-table-scroll">
+                    <table className="products-table purchase-details-table">
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th>Categoria</th>
+                          <th>Quantidade</th>
+                          <th>Valor por unidade</th>
+                          <th>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {purchaseDetails.items.map((item) => (
+                          <tr key={item.id}>
+                            <td className="table-product-name">{item.productName}</td>
+                            <td>{item.category}</td>
+                            <td>
+                              {item.quantity.toLocaleString('pt-BR')} {item.unit}
+                            </td>
+                            <td>{formatMoney(item.unitPriceCents)}</td>
+                            <td>{formatMoney(item.totalCents)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="purchase-details-total">
+                    <span>Total da compra</span>
+                    <strong>{formatMoney(purchaseDetails.totalCents)}</strong>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </section>
         </div>
       )}
     </section>

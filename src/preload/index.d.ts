@@ -4,6 +4,7 @@ declare global {
   type NewPurchase = {
     storeName: string
     purchaseDate: string
+    paymentMethod: string
     items: {
       productId: number
       quantity: number
@@ -15,6 +16,7 @@ declare global {
   type ImportedPurchaseInput = {
     storeName: string
     purchaseDate: string
+    paymentMethod: string
     items: {
       productId?: number
       newProduct?: NewProduct
@@ -35,8 +37,38 @@ declare global {
     id: number
     storeName: string
     purchaseDate: string
+    paymentMethod: string | null
     totalCents: number
     itemCount: number
+  }
+
+  type PurchaseDetails = PurchaseSummary & {
+    items: {
+      id: number
+      productName: string
+      category: string
+      unit: string
+      quantity: number
+      unitPriceCents: number
+      totalCents: number
+      pricingMode: PricingMode | null
+    }[]
+  }
+
+  type TrashedPurchase = PurchaseSummary & {
+    deletedAt: string
+    expiresAt: string
+  }
+
+  type AppSettings = {
+    saveStockCheckHistory: boolean
+    autoSaveStockQuantities: boolean
+  }
+
+  type StockCheckResult = {
+    undoToken: string
+    historySaved: boolean
+    previousQuantities: { productId: number; countedQuantity: number }[]
   }
 
   type PricingMode = 'item_total' | 'unit_measure'
@@ -45,6 +77,7 @@ declare global {
     id: number
     productId: number
     productName: string
+    category: string
     unit: string
     storeName: string
     purchaseDate: string
@@ -87,22 +120,41 @@ declare global {
         add: (product: NewProduct) => Promise<Product>
         update: (productId: number, product: NewProduct) => Promise<Product>
         archive: (productId: number) => Promise<void>
+        deletePermanently: (productIds: number[]) => Promise<void>
         listArchived: () => Promise<Product[]>
         restore: (productId: number) => Promise<void>
+        undoQuantityUpdate: (
+          productId: number,
+          expectedQuantity: number,
+          previousQuantity: number
+        ) => Promise<void>
       }
 
       purchases: {
         list: () => Promise<PurchaseSummary[]>
+        details: (purchaseId: number) => Promise<PurchaseDetails>
+        storeSuggestions: () => Promise<string[]>
         add: (purchase: NewPurchase) => Promise<PurchaseSummary>
         addImported: (purchase: ImportedPurchaseInput) => Promise<{
           purchase: PurchaseSummary
           createdProducts: Product[]
         }>
-        remove: (purchaseId: number) => Promise<void>
+        trash: (purchaseId: number) => Promise<TrashedPurchase>
+        listTrash: () => Promise<TrashedPurchase[]>
+        restore: (purchaseId: number) => Promise<PurchaseSummary>
+        permanentlyDelete: (purchaseId: number) => Promise<void>
       }
 
       stockChecks: {
-        record: (items: { productId: number; countedQuantity: number }[]) => Promise<void>
+        record: (
+          items: { productId: number; countedQuantity: number }[]
+        ) => Promise<StockCheckResult>
+        undo: (undoToken: string) => Promise<void>
+      }
+
+      settings: {
+        get: () => Promise<AppSettings>
+        update: (settings: Partial<AppSettings>) => Promise<AppSettings>
       }
 
       shoppingList: {

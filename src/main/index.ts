@@ -8,16 +8,28 @@ import {
   addImportedPurchase,
   addPurchase,
   archiveProduct,
-  deletePurchase,
+  deleteProductsPermanently,
+  permanentlyDeletePurchase,
+  purgeExpiredPurchases,
   getDashboardSummary,
+  getAppSettings,
   getArchivedProducts,
+  getPurchaseDetails,
+  getPurchaseStoreSuggestions,
   getPriceHistory,
   getProducts,
   getPurchases,
+  getTrashedPurchases,
   initializeDatabase,
   recordStockCheck,
+  restorePurchase,
   restoreProduct,
+  trashPurchase,
+  undoProductQuantityUpdate,
+  undoStockCheck,
+  updateAppSettings,
   updateProduct,
+  type AppSettings,
   type NewProduct,
   type NewImportedPurchase,
   type NewPurchase,
@@ -216,15 +228,37 @@ app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
   initializeDatabase()
+  const purchaseCleanupTimer = setInterval(() => {
+    try {
+      purgeExpiredPurchases()
+    } catch (error) {
+      console.error('Não foi possível limpar as compras expiradas da lixeira.', error)
+    }
+  }, 60_000)
+  purchaseCleanupTimer.unref()
 
   ipcMain.handle('dashboard:get-summary', () => getDashboardSummary())
   ipcMain.handle('products:list', () => getProducts())
   ipcMain.handle('products:archived-list', () => getArchivedProducts())
   ipcMain.handle('products:restore', (_event, productId: number) => restoreProduct(productId))
+  ipcMain.handle(
+    'products:undo-quantity-update',
+    (_event, productId: number, expectedQuantity: number, previousQuantity: number) =>
+      undoProductQuantityUpdate(productId, expectedQuantity, previousQuantity)
+  )
   ipcMain.handle('purchases:list', () => getPurchases())
+  ipcMain.handle('purchases:details', (_event, purchaseId: number) =>
+    getPurchaseDetails(purchaseId)
+  )
+  ipcMain.handle('purchases:store-suggestions', () => getPurchaseStoreSuggestions())
   ipcMain.handle('purchases:add', (_event, input: NewPurchase) => addPurchase(input))
   ipcMain.handle('purchases:add-imported', (_event, input: NewImportedPurchase) =>
     addImportedPurchase(input)
+  )
+  ipcMain.handle('purchases:trash-list', () => getTrashedPurchases())
+  ipcMain.handle('purchases:restore', (_event, purchaseId: number) => restorePurchase(purchaseId))
+  ipcMain.handle('purchases:delete-permanently', (_event, purchaseId: number) =>
+    permanentlyDeletePurchase(purchaseId)
   )
   ipcMain.handle(
     'shopping-list:export-pdf',
@@ -273,17 +307,27 @@ app.whenReady().then(() => {
       }
     }
   )
-  ipcMain.handle('purchases:delete', (_event, purchaseId: number) => {
-    deletePurchase(purchaseId)
+  ipcMain.handle('purchases:trash', (_event, purchaseId: number) => {
+    return trashPurchase(purchaseId)
   })
   ipcMain.handle('stock-checks:record', (_event, items: StockCheckInput[]) => {
-    recordStockCheck(items)
+    return recordStockCheck(items)
   })
+  ipcMain.handle('stock-checks:undo', (_event, undoToken: string) => {
+    undoStockCheck(undoToken)
+  })
+  ipcMain.handle('settings:get', () => getAppSettings())
+  ipcMain.handle('settings:update', (_event, settings: Partial<AppSettings>) =>
+    updateAppSettings(settings)
+  )
   ipcMain.handle('products:add', (_event, input: NewProduct) => addProduct(input))
   ipcMain.handle('products:update', (_event, productId: number, input: NewProduct) =>
     updateProduct(productId, input)
   )
   ipcMain.handle('products:archive', (_event, productId: number) => archiveProduct(productId))
+  ipcMain.handle('products:delete-permanently', (_event, productIds: number[]) =>
+    deleteProductsPermanently(productIds)
+  )
   ipcMain.handle('prices:list', () => getPriceHistory())
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

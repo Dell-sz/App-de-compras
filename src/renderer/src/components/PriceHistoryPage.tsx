@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, ListChecks, Search, Tag, X } from 'lucide-react'
-type ComparisonProduct = Pick<Product, 'id' | 'name' | 'unit'>
+import { CalendarDays, ListChecks, ListX, Search, Tag, X } from 'lucide-react'
+type ComparisonProduct = Pick<Product, 'id' | 'name' | 'category' | 'unit'>
 type ComparablePriceHistoryEntry = PriceHistoryEntry & { comparableUnitPriceCents: number }
 
 function toLocalDateInput(date: Date): string {
@@ -47,9 +47,7 @@ function compareEntriesNewestFirst(a: PriceHistoryEntry, b: PriceHistoryEntry): 
   return b.purchaseDate.localeCompare(a.purchaseDate) || b.id - a.id
 }
 
-function hasComparablePrice(
-  entry: PriceHistoryEntry
-): entry is ComparablePriceHistoryEntry {
+function hasComparablePrice(entry: PriceHistoryEntry): entry is ComparablePriceHistoryEntry {
   return (
     typeof entry.comparableUnitPriceCents === 'number' &&
     Number.isFinite(entry.comparableUnitPriceCents) &&
@@ -66,6 +64,7 @@ function PriceHistoryPage(): React.JSX.Element {
   const [draftProductIds, setDraftProductIds] = useState<number[]>([])
   const [showProductSelector, setShowProductSelector] = useState(false)
   const [productSearch, setProductSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [period, setPeriod] = useState(getDefaultPeriod)
 
   useEffect(() => {
@@ -104,13 +103,14 @@ function PriceHistoryPage(): React.JSX.Element {
 
   const comparisonProducts = useMemo(() => {
     const available = new Map<number, ComparisonProduct>(
-      products.map(({ id, name, unit }) => [id, { id, name, unit }])
+      products.map(({ id, name, category, unit }) => [id, { id, name, category, unit }])
     )
     for (const entry of history) {
       if (!available.has(entry.productId)) {
         available.set(entry.productId, {
           id: entry.productId,
           name: entry.productName,
+          category: entry.category,
           unit: entry.unit
         })
       }
@@ -121,6 +121,9 @@ function PriceHistoryPage(): React.JSX.Element {
   const selectedProducts = comparisonProducts.filter((product) =>
     selectedProductIds.includes(product.id)
   )
+  const resultProducts = selectedProducts.filter(
+    (product) => !categoryFilter || product.category === categoryFilter
+  )
   const missingPeriod = !period.start || !period.end
   const startAfterEnd = Boolean(period.start && period.end && period.start > period.end)
   const periodHistory = history.filter(
@@ -129,7 +132,8 @@ function PriceHistoryPage(): React.JSX.Element {
       !startAfterEnd &&
       entry.purchaseDate >= period.start &&
       entry.purchaseDate <= period.end &&
-      selectedProductIds.includes(entry.productId)
+      selectedProductIds.includes(entry.productId) &&
+      (!categoryFilter || entry.category === categoryFilter)
   )
 
   const historyByProduct = new Map<number, PriceHistoryEntry[]>()
@@ -139,9 +143,31 @@ function PriceHistoryPage(): React.JSX.Element {
     historyByProduct.set(entry.productId, entries)
   }
 
-  const filteredProducts = comparisonProducts.filter((product) =>
-    product.name.toLocaleLowerCase('pt-BR').includes(productSearch.trim().toLocaleLowerCase('pt-BR'))
+  const categories = [...new Set(comparisonProducts.map((product) => product.category))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  const filteredProducts = comparisonProducts.filter(
+    (product) =>
+      (!categoryFilter || product.category === categoryFilter) &&
+      product.name
+        .toLocaleLowerCase('pt-BR')
+        .includes(productSearch.trim().toLocaleLowerCase('pt-BR'))
   )
+  const productsWithPricesInPeriod = new Set(
+    history
+      .filter(
+        (entry) =>
+          !missingPeriod &&
+          !startAfterEnd &&
+          entry.purchaseDate >= period.start &&
+          entry.purchaseDate <= period.end &&
+          (!categoryFilter || entry.category === categoryFilter)
+      )
+      .map((entry) => entry.productId)
+  )
+  const selectableProductIds = filteredProducts
+    .filter((product) => productsWithPricesInPeriod.has(product.id))
+    .map((product) => product.id)
 
   const selectedProductLabels = selectedProducts.slice(0, 3)
   const hiddenSelectionCount = Math.max(0, selectedProducts.length - selectedProductLabels.length)
@@ -161,7 +187,15 @@ function PriceHistoryPage(): React.JSX.Element {
   }
 
   function selectShoppingListProducts(): void {
-    setDraftProductIds(shoppingListProducts.map((product) => product.id))
+    setDraftProductIds(
+      shoppingListProducts
+        .filter((product) => !categoryFilter || product.category === categoryFilter)
+        .map((product) => product.id)
+    )
+  }
+
+  function selectAllProducts(): void {
+    setDraftProductIds(selectableProductIds)
   }
 
   function confirmProductSelection(): void {
@@ -174,9 +208,14 @@ function PriceHistoryPage(): React.JSX.Element {
       <div className="price-compare-intro">
         <div>
           <h2>Comparação de preços</h2>
-          <p>Compare o histórico por mercado e data sem misturar total pago com preço por medida.</p>
+          <p>
+            Compare o histórico por estabelecimento e data sem misturar total pago com preço por
+            medida.
+          </p>
         </div>
-        <span className="price-compare-icon"><Tag size={20} /></span>
+        <span className="price-compare-icon">
+          <Tag size={20} />
+        </span>
       </div>
 
       {error && <div className="error-message">{error}</div>}
@@ -201,7 +240,9 @@ function PriceHistoryPage(): React.JSX.Element {
                 ) : (
                   <>
                     {selectedProductLabels.map((product) => (
-                      <span className="price-selected-tag" key={product.id}>{product.name}</span>
+                      <span className="price-selected-tag" key={product.id}>
+                        {product.name}
+                      </span>
                     ))}
                     {hiddenSelectionCount > 0 && (
                       <span className="price-selected-tag price-selected-more">
@@ -214,24 +255,47 @@ function PriceHistoryPage(): React.JSX.Element {
             </div>
           </div>
           <label className="form-field">
-            <span><CalendarDays size={13} /> Data inicial</span>
+            <span>
+              <CalendarDays size={13} /> Data inicial
+            </span>
             <input
               type="date"
               value={period.start}
               max={period.end || undefined}
-              onChange={(event) => setPeriod((current) => ({ ...current, start: event.target.value }))}
+              onChange={(event) =>
+                setPeriod((current) => ({ ...current, start: event.target.value }))
+              }
               disabled={loading}
             />
           </label>
           <label className="form-field">
-            <span><CalendarDays size={13} /> Data final</span>
+            <span>
+              <CalendarDays size={13} /> Data final
+            </span>
             <input
               type="date"
               value={period.end}
               min={period.start || undefined}
-              onChange={(event) => setPeriod((current) => ({ ...current, end: event.target.value }))}
+              onChange={(event) =>
+                setPeriod((current) => ({ ...current, end: event.target.value }))
+              }
               disabled={loading}
             />
+          </label>
+          <label className="form-field">
+            Categoria
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+              disabled={loading}
+            >
+              <option value="">Todas as categorias</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
       </div>
@@ -276,6 +340,37 @@ function PriceHistoryPage(): React.JSX.Element {
               />
             </label>
 
+            <label className="form-field price-category-filter">
+              Categoria
+              <select
+                value={categoryFilter}
+                onChange={(event) => setCategoryFilter(event.target.value)}
+              >
+                <option value="">Todas as categorias</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <button
+              type="button"
+              className="price-select-all-option"
+              onClick={selectAllProducts}
+              disabled={selectableProductIds.length === 0}
+            >
+              <ListChecks size={16} />
+              <span>
+                <strong>Selecionar todos</strong>
+                <small>
+                  {selectableProductIds.length}{' '}
+                  {selectableProductIds.length === 1 ? 'produto' : 'produtos'} com preços no período
+                </small>
+              </span>
+            </button>
+
             <button
               type="button"
               className="price-shopping-list-option"
@@ -312,16 +407,14 @@ function PriceHistoryPage(): React.JSX.Element {
             <div className="price-selector-actions">
               <button
                 type="button"
-                className="text-button"
+                className="text-button price-clear-selection-button"
                 onClick={() => setDraftProductIds([])}
+                aria-label="Limpar seleção de produtos"
+                title="Limpar seleção"
               >
-                Limpar seleção
+                <ListX size={15} /> Limpar seleção
               </button>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={confirmProductSelection}
-              >
+              <button type="button" className="primary-button" onClick={confirmProductSelection}>
                 Confirmar ({draftProductIds.length})
               </button>
             </div>
@@ -343,24 +436,33 @@ function PriceHistoryPage(): React.JSX.Element {
       <div className="price-comparison-results">
         {loading ? (
           <div className="panel empty-state">Carregando dados de comparação...</div>
-        ) : error ? null : missingPeriod || startAfterEnd ? null : selectedProductIds.length === 0 ? (
+        ) : error ? null : missingPeriod || startAfterEnd ? null : selectedProductIds.length ===
+          0 ? (
           <div className="panel empty-state">
-            <div className="placeholder-icon"><Tag size={24} /></div>
+            <div className="placeholder-icon">
+              <Tag size={24} />
+            </div>
             <strong>Selecione produtos para comparar</strong>
             <span>Escolha um ou mais produtos ou compare todos da Lista de compras.</span>
           </div>
-        ) : periodHistory.length === 0 ? (
+        ) : resultProducts.length === 0 || periodHistory.length === 0 ? (
           <div className="panel empty-state">
-            <div className="placeholder-icon"><Tag size={24} /></div>
+            <div className="placeholder-icon">
+              <Tag size={24} />
+            </div>
             <strong>Nenhuma compra encontrada neste período</strong>
             <span>Altere o período ou a seleção de produtos para ver resultados.</span>
           </div>
         ) : (
-          selectedProducts.map((product) => {
-            const entries = [...(historyByProduct.get(product.id) ?? [])].sort(compareEntriesNewestFirst)
+          resultProducts.map((product) => {
+            const entries = [...(historyByProduct.get(product.id) ?? [])].sort(
+              compareEntriesNewestFirst
+            )
             const allComparableEntries = entries.filter(hasComparablePrice)
             const newest = allComparableEntries[0]
-            const comparableUnit = newest ? getComparableUnit(newest.unit) : getComparableUnit(product.unit)
+            const comparableUnit = newest
+              ? getComparableUnit(newest.unit)
+              : getComparableUnit(product.unit)
             const comparableUnitKey = newest
               ? getComparableUnitKey(newest.unit)
               : getComparableUnitKey(product.unit)
@@ -370,8 +472,7 @@ function PriceHistoryPage(): React.JSX.Element {
             const previous = comparableEntries.find((entry) => entry.id !== newest?.id)
             const cheapest = comparableEntries.reduce<ComparablePriceHistoryEntry | undefined>(
               (lowest, entry) =>
-                !lowest ||
-                entry.comparableUnitPriceCents < lowest.comparableUnitPriceCents
+                !lowest || entry.comparableUnitPriceCents < lowest.comparableUnitPriceCents
                   ? entry
                   : lowest,
               undefined
@@ -382,9 +483,7 @@ function PriceHistoryPage(): React.JSX.Element {
                 ? newest.comparableUnitPriceCents - previous.comparableUnitPriceCents
                 : null
             const differencePercent =
-              differenceCents !== null &&
-              previousPriceCents !== null &&
-              previousPriceCents !== 0
+              differenceCents !== null && previousPriceCents !== null && previousPriceCents !== 0
                 ? (differenceCents / previousPriceCents) * 100
                 : null
 
@@ -414,9 +513,12 @@ function PriceHistoryPage(): React.JSX.Element {
                           {formatMoney(differenceCents)}
                           {differencePercent === null
                             ? ' · % indisponível'
-                            : ` · ${differencePercent > 0 ? '+' : ''}${differencePercent.toLocaleString('pt-BR', {
-                                maximumFractionDigits: 1
-                              })}%`}
+                            : ` · ${differencePercent > 0 ? '+' : ''}${differencePercent.toLocaleString(
+                                'pt-BR',
+                                {
+                                  maximumFractionDigits: 1
+                                }
+                              )}%`}
                         </strong>
                       )}
                     </div>
@@ -424,7 +526,8 @@ function PriceHistoryPage(): React.JSX.Element {
                       <span>Menor preço no período</span>
                       {cheapest ? (
                         <strong>
-                          {cheapest.storeName} · {formatMoney(cheapest.comparableUnitPriceCents)}/{comparableUnit}
+                          {cheapest.storeName} · {formatMoney(cheapest.comparableUnitPriceCents)}/
+                          {comparableUnit}
                         </strong>
                       ) : (
                         <strong className="price-delta-neutral">Sem comparação disponível</strong>
@@ -440,7 +543,7 @@ function PriceHistoryPage(): React.JSX.Element {
                     <table className="products-table price-comparison-table">
                       <thead>
                         <tr>
-                          <th>Mercado</th>
+                          <th>Estabelecimento</th>
                           <th>Data</th>
                           <th>Quantidade</th>
                           <th>Valor total pago</th>
@@ -456,11 +559,15 @@ function PriceHistoryPage(): React.JSX.Element {
                             <tr key={entry.id}>
                               <td>{entry.storeName}</td>
                               <td>{formatDate(entry.purchaseDate)}</td>
-                              <td>{entry.quantity.toLocaleString('pt-BR')} {entry.unit}</td>
+                              <td>
+                                {entry.quantity.toLocaleString('pt-BR')} {entry.unit}
+                              </td>
                               <td>{formatMoney(entry.totalPaidCents)}</td>
                               <td>
                                 {comparablePrice !== null ? (
-                                  <>{formatMoney(comparablePrice)} / {getComparableUnit(entry.unit)}</>
+                                  <>
+                                    {formatMoney(comparablePrice)} / {getComparableUnit(entry.unit)}
+                                  </>
                                 ) : (
                                   <span className="price-legacy">Sem comparação disponível</span>
                                 )}
